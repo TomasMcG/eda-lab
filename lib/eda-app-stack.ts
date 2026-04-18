@@ -82,6 +82,22 @@ export class EDAAppStack extends cdk.Stack {
  }
  );
 
+    const addMetadataFn = new lambdanode.NodejsFunction(
+      this,
+      "addMetadataFn",
+ {
+        runtime: lambda.Runtime.NODEJS_20_X,
+        entry: `${__dirname}/../lambdas/addImageMetadata.ts`,
+        timeout: cdk.Duration.seconds(15),
+        memorySize: 128,
+        environment: {
+          TABLE_NAME: imagesTable.tableName,
+        },
+    }
+ );
+
+ 
+
 
 
        const mailerFn = new lambdanode.NodejsFunction(this, "mailer", {
@@ -111,11 +127,58 @@ export class EDAAppStack extends cdk.Stack {
         new s3n.SnsDestination(newImageTopic)  // Changed
     );
 
-        newImageTopic.addSubscription(
-      new subs.SqsSubscription(imageProcessQueue)
-    );
+           newImageTopic.addSubscription(
+      new subs.SqsSubscription(imageProcessQueue, {
+        filterPolicyWithMessageBody: {
+          Records: sns.FilterOrPolicy.policy({
+            s3: sns.FilterOrPolicy.policy({
+              object: sns.FilterOrPolicy.policy({
+                key: sns.FilterOrPolicy.filter(
+                  sns.SubscriptionFilter.stringFilter({
+                    matchPrefixes: ["image"],
+                 })
 
-        newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
+             ),
+           }),
+         }),
+         }),
+         },
+        rawMessageDelivery: true,
+      })
+ );
+
+
+            newImageTopic.addSubscription(
+      new subs.SqsSubscription(mailerQ, {
+        filterPolicyWithMessageBody: {
+          Records: sns.FilterOrPolicy.policy({
+            s3: sns.FilterOrPolicy.policy({
+              object: sns.FilterOrPolicy.policy({
+                key: sns.FilterOrPolicy.filter(
+                  sns.SubscriptionFilter.stringFilter({
+                    matchPrefixes: ["image"],
+                  })
+                ),
+              }),
+            }),
+           }),
+         },
+        rawMessageDelivery: true,
+      })
+ );
+
+
+
+            newImageTopic.addSubscription(
+      new subs.LambdaSubscription(addMetadataFn, {
+        filterPolicy: {
+          metadata_type: sns.SubscriptionFilter.stringFilter({
+            allowlist: ["Caption", "Date", "Photographer"],
+      }),
+      },
+    })
+ );
+
 
 
 
@@ -161,6 +224,8 @@ export class EDAAppStack extends cdk.Stack {
       })
     );
 
+    imagesTable.grantReadWriteData(addMetadataFn);
+
 
     // Output
     
@@ -168,6 +233,9 @@ export class EDAAppStack extends cdk.Stack {
       value: imagesBucket.bucketName,
     });
 
+     new cdk.CfnOutput(this, "SNS Topic ARN", {
+      value: newImageTopic.topicArn ,
+     });
 
     
   }
